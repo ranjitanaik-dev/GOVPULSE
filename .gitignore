@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.env
+venv/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Spark / Hadoop
+derby.log
+metastore_db/
+spark-warehouse/
+
+# Data (raw uploads are excluded from git, but keep .gitkeep)
+data/raw/*
+data/processed/*
+data/quarantine/*
+data/reports/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/quarantine/.gitkeep
+!data/reports/.gitkeep
+
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# Node / React
+node_modules/
+frontend/dist/
+frontend/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
