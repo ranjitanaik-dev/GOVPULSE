@@ -26,7 +26,10 @@ export const datasetsAPI = {
   }),
   list: (schemeId) => api.get('/datasets', { params: schemeId ? { scheme_id: schemeId } : {} }),
   get: (id) => api.get(`/datasets/${id}`),
-  process: (id) => api.post(`/datasets/${id}/process`),
+  getPreview: (id) => api.get(`/datasets/${id}/preview`),
+  validateMapping: (id, mapping) => api.post(`/datasets/${id}/validate-mapping`, { column_mapping: mapping }),
+  updateMapping: (id, mapping) => api.put(`/datasets/${id}/mapping`, { column_mapping: mapping }),
+  process: (id, mapping) => api.post(`/datasets/${id}/process`, mapping ? { column_mapping: mapping } : {}),
 }
 
 export const jobsAPI = {

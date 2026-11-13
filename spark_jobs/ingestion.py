@@ -116,14 +116,53 @@ def read_dataset(
 
 def apply_column_mapping(df: DataFrame, mapping: dict) -> DataFrame:
     """
-    Rename columns according to a user-supplied mapping dict:
-        { "original_col_name": "canonical_col_name", ... }
-    Missing columns are silently skipped.
+    Rename columns according to a user-supplied mapping dict.
+    Supports both orientations:
+        { "original_col_name": "canonical_col_name" }
+        or { "canonical_col_name": "original_col_name" }
+    Matches case-insensitively using normalised column names.
     """
-    for original, canonical in mapping.items():
-        norm_original = _normalise_col_name(original)
-        if norm_original in df.columns:
-            df = df.withColumnRenamed(norm_original, canonical)
+    if not mapping:
+        return df
+
+    # First, build a lookup of normalised current column names in df -> actual df column name
+    df_col_map = {_normalise_col_name(c): c for c in df.columns}
+
+    # Standardize mapping to { original_col: canonical_col }
+    standardized = {}
+    known_canonicals = {
+        "state", "district", "households_registered", "households_employed",
+        "person_days_generated", "person_days_target", "expenditure_lakh", "total_budget_lakh",
+        "houses_target", "houses_sanctioned", "houses_completed", "houses_in_progress", "expenditure_cr",
+        "beneficiaries_identified", "cards_issued", "hospitalisations", "claims_submitted", "claims_settled",
+        "total_schools", "total_students", "total_teachers", "gross_enrolment_ratio", "net_enrolment_ratio",
+    }
+
+    for k, v in mapping.items():
+        if not k or not v:
+            continue
+        # Case A: k is canonical indicator, v is original dataset column
+        if k in known_canonicals and v not in known_canonicals:
+            orig = v
+            canon = k
+        # Case B: v is canonical indicator, k is original dataset column
+        elif v in known_canonicals:
+            orig = k
+            canon = v
+        else:
+            # Fallback assumption: k is original, v is target
+            orig = k
+            canon = v
+
+        norm_orig = _normalise_col_name(orig)
+        if norm_orig in df_col_map:
+            actual_col_in_df = df_col_map[norm_orig]
+            if actual_col_in_df != canon:
+                df = df.withColumnRenamed(actual_col_in_df, canon)
+                # Update df_col_map in case subsequent mappings refer to it
+                del df_col_map[norm_orig]
+                df_col_map[_normalise_col_name(canon)] = canon
+
     return df
 
 

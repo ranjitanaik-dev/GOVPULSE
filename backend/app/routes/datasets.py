@@ -1,10 +1,17 @@
 """
 GovPulse — Datasets Router
+----------------------------
+Handles dataset upload, preview of actual rows & columns, interactive
+column mapping, schema validation, and Spark processing trigger.
 """
 
+import os
 import asyncio
 import logging
 import json
+import pandas as pd
+from typing import Optional
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
@@ -13,9 +20,51 @@ from app.database.db import get_db, SessionLocal
 from app.models.models import Dataset, ProcessingJob
 from app.services.file_handler import save_uploaded_file
 from app.services.spark_runner import launch_spark_job
+from app.services.scheme_config import (
+    SCHEMES_SEED,
+    SCHEME_INDICATOR_METADATA,
+    suggest_mapping,
+    validate_column_mapping,
+)
 
 logger = logging.getLogger("govpulse.routes.datasets")
 router = APIRouter()
+
+
+class MappingPayload(BaseModel):
+    column_mapping: dict[str, str]
+
+
+def _read_file_preview(file_path: str, file_format: str, n_rows: int = 10) -> tuple[list[str], list[dict], int]:
+    """Helper to read column names and top N rows as clean dicts using pandas."""
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Dataset file not found on disk: {file_path}")
+
+    ext = os.path.splitext(file_path)[1].lower()
+    is_excel = file_format == "excel" or ext in (".xls", ".xlsx")
+
+    try:
+        if is_excel:
+            df = pd.read_excel(file_path, nrows=n_rows, dtype=str)
+        else:
+            df = pd.read_csv(file_path, nrows=n_rows, dtype=str, skipinitialspace=True)
+    except Exception as e:
+        logger.error(f"Failed to read file preview for {file_path}: {e}")
+        # Try fallback encoding for CSV
+        if not is_excel:
+            df = pd.read_csv(file_path, nrows=n_rows, dtype=str, encoding="latin1")
+        else:
+            raise
+
+    # Clean column names (strip whitespace)
+    columns = [str(c).strip() for c in df.columns]
+    df.columns = columns
+
+    # Replace NaN / None with empty strings for clean JSON
+    df = df.fillna("")
+    rows = df.to_dict(orient="records")
+
+    return columns, rows, len(rows)
 
 
 def _run_spark_background(job_id, dataset_id, file_path, scheme_id, reporting_year, column_mapping):
@@ -39,7 +88,6 @@ def _run_spark_background(job_id, dataset_id, file_path, scheme_id, reporting_ye
 
 @router.post("/upload", summary="Upload a government dataset file")
 async def upload_dataset(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     scheme_id: str = Form(...),
     reporting_year: str = Form(...),
@@ -49,7 +97,7 @@ async def upload_dataset(
 ):
     # Validate scheme
     valid_schemes = ["mgnrega", "pmayg", "pmjay", "udise"]
-    if scheme_id not in valid_schemes:
+    if scheme_id.lower() not in valid_schemes:
         raise HTTPException(400, detail=f"Invalid scheme_id. Must be one of: {valid_schemes}")
 
     # Read file
@@ -57,34 +105,35 @@ async def upload_dataset(
     if not content:
         raise HTTPException(400, detail="Uploaded file is empty.")
 
-    # Save file
+    # Save file to preserved raw storage
     try:
-        file_meta = save_uploaded_file(content, file.filename, scheme_id)
+        file_meta = save_uploaded_file(content, file.filename, scheme_id.lower())
     except ValueError as e:
         raise HTTPException(400, detail=str(e))
 
-    # Parse column mapping
+    # Parse initial column mapping if provided
     try:
         col_map = json.loads(column_mapping) if column_mapping else {}
     except json.JSONDecodeError:
         col_map = {}
 
-    # Quick column detection (pandas — not Spark, just for preview)
-    detected_cols = []
+    # Read preview rows & detect columns
     try:
-        import pandas as pd
-        fp = file_meta["file_path"]
-        if file_meta["file_format"] == "csv":
-            preview = pd.read_csv(fp, nrows=0)
-        else:
-            preview = pd.read_excel(fp, nrows=0)
-        detected_cols = list(preview.columns)
-    except Exception:
+        detected_cols, preview_rows, _ = _read_file_preview(
+            file_meta["file_path"], file_meta["file_format"], n_rows=10
+        )
+    except Exception as e:
+        logger.error(f"Error reading preview for uploaded file: {e}")
         detected_cols = []
+        preview_rows = []
+
+    # If no custom mapping supplied, generate smart suggested mapping
+    if not col_map and detected_cols:
+        col_map = suggest_mapping(detected_cols, scheme_id.lower())
 
     # Create Dataset record
     dataset = Dataset(
-        scheme_id=scheme_id,
+        scheme_id=scheme_id.lower(),
         file_name=file_meta["file_name"],
         file_path=file_meta["file_path"],
         file_size_bytes=file_meta["file_size_bytes"],
@@ -102,12 +151,14 @@ async def upload_dataset(
     return {
         "dataset_id": dataset.id,
         "file_name": dataset.file_name,
-        "scheme_id": scheme_id,
-        "reporting_year": reporting_year,
+        "scheme_id": dataset.scheme_id,
+        "reporting_year": dataset.reporting_year,
         "file_size_bytes": dataset.file_size_bytes,
         "detected_columns": detected_cols,
+        "preview_rows": preview_rows,
+        "suggested_mapping": col_map,
         "status": "uploaded",
-        "message": "File uploaded successfully. Use POST /api/datasets/{id}/process to start Spark processing.",
+        "message": "File uploaded and preserved. Please review column mappings before starting Spark processing.",
     }
 
 
@@ -131,6 +182,7 @@ def list_datasets(
             "total_records": d.total_records,
             "valid_records": d.valid_records,
             "status": d.status,
+            "column_mapping": d.column_mapping,
             "uploaded_at": d.uploaded_at.isoformat() if d.uploaded_at else None,
         }
         for d in datasets
@@ -162,18 +214,168 @@ def get_dataset(dataset_id: int, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/{dataset_id}/process", summary="Trigger Spark processing for a dataset")
+@router.get("/{dataset_id}/preview", summary="Preview first 10 rows and schema requirements for mapping")
+def get_dataset_preview(dataset_id: int, db: Session = Depends(get_db)):
+    """
+    Returns actual column names, first 10 preview rows, scheme indicator requirements
+    (mandatory vs optional), current mapping, and smart suggested mapping.
+    """
+    dataset = db.get(Dataset, dataset_id)
+    if not dataset:
+        raise HTTPException(404, detail="Dataset not found")
+
+    try:
+        columns, preview_rows, total_preview = _read_file_preview(
+            dataset.file_path, dataset.file_format, n_rows=10
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate preview for dataset {dataset_id}: {e}")
+        raise HTTPException(500, detail=f"Could not read dataset file preview: {str(e)}")
+
+    scheme_id = dataset.scheme_id.lower()
+    indicator_meta = SCHEME_INDICATOR_METADATA.get(scheme_id, {})
+
+    required_cols = [k for k, v in indicator_meta.items() if v.get("required")]
+    optional_cols = [k for k, v in indicator_meta.items() if not v.get("required")]
+
+    # Suggest mapping
+    suggested = suggest_mapping(columns, scheme_id)
+    current = dataset.column_mapping or suggested
+
+    # Perform initial validation on current mapping
+    validation = validate_column_mapping(scheme_id, current, columns, preview_rows)
+
+    return {
+        "dataset_id": dataset.id,
+        "file_name": dataset.file_name,
+        "file_format": dataset.file_format,
+        "file_size_bytes": dataset.file_size_bytes,
+        "scheme_id": scheme_id,
+        "reporting_year": dataset.reporting_year,
+        "source": dataset.source,
+        "status": dataset.status,
+        "detected_columns": columns,
+        "preview_rows": preview_rows,
+        "total_preview_rows": total_preview,
+        "required_columns": required_cols,
+        "optional_columns": optional_cols,
+        "indicators": indicator_meta,
+        "suggested_mapping": suggested,
+        "current_mapping": current,
+        "validation": validation,
+    }
+
+
+@router.post("/{dataset_id}/validate-mapping", summary="Validate column mapping against scheme schema")
+def validate_mapping(dataset_id: int, payload: MappingPayload, db: Session = Depends(get_db)):
+    """
+    Validates user's column mapping before launching Spark processing.
+    Checks mandatory columns, column existence, duplicate mapping, and preview data types.
+    """
+    dataset = db.get(Dataset, dataset_id)
+    if not dataset:
+        raise HTTPException(404, detail="Dataset not found")
+
+    try:
+        columns, preview_rows, _ = _read_file_preview(
+            dataset.file_path, dataset.file_format, n_rows=10
+        )
+    except Exception:
+        columns = dataset.detected_columns or []
+        preview_rows = []
+
+    validation = validate_column_mapping(
+        dataset.scheme_id,
+        payload.column_mapping,
+        columns,
+        sample_rows=preview_rows
+    )
+
+    return validation
+
+
+@router.put("/{dataset_id}/mapping", summary="Save column mapping for a dataset")
+def save_mapping(dataset_id: int, payload: MappingPayload, db: Session = Depends(get_db)):
+    """Save the user-configured column mapping."""
+    dataset = db.get(Dataset, dataset_id)
+    if not dataset:
+        raise HTTPException(404, detail="Dataset not found")
+
+    try:
+        columns, preview_rows, _ = _read_file_preview(
+            dataset.file_path, dataset.file_format, n_rows=10
+        )
+    except Exception:
+        columns = dataset.detected_columns or []
+        preview_rows = []
+
+    validation = validate_column_mapping(
+        dataset.scheme_id,
+        payload.column_mapping,
+        columns,
+        sample_rows=preview_rows
+    )
+
+    dataset.column_mapping = payload.column_mapping
+    db.commit()
+    db.refresh(dataset)
+
+    return {
+        "message": "Column mapping updated successfully.",
+        "dataset_id": dataset.id,
+        "column_mapping": dataset.column_mapping,
+        "validation": validation,
+    }
+
+
+@router.post("/{dataset_id}/process", summary="Validate mapping and trigger Spark processing")
 def process_dataset(
     dataset_id: int,
     background_tasks: BackgroundTasks,
+    payload: Optional[MappingPayload] = None,
     db: Session = Depends(get_db),
 ):
+    """
+    Triggers Spark processing after strictly validating mandatory column mappings.
+    Rejects processing if required indicators are missing or incompatible.
+    """
     dataset = db.get(Dataset, dataset_id)
     if not dataset:
         raise HTTPException(404, detail="Dataset not found")
 
     if dataset.status == "processing":
         raise HTTPException(409, detail="Dataset is already being processed.")
+
+    # Determine mapping to use
+    mapping_to_use = (payload.column_mapping if payload and payload.column_mapping else dataset.column_mapping) or {}
+
+    # Read preview to validate
+    try:
+        columns, preview_rows, _ = _read_file_preview(
+            dataset.file_path, dataset.file_format, n_rows=10
+        )
+    except Exception:
+        columns = dataset.detected_columns or []
+        preview_rows = []
+
+    # Strict pre-validation: never silently assign or process invalid data
+    validation = validate_column_mapping(
+        dataset.scheme_id,
+        mapping_to_use,
+        columns,
+        sample_rows=preview_rows
+    )
+
+    if not validation["is_valid"]:
+        error_msg = "; ".join(validation["errors"])
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot process dataset: {error_msg}. Please map all mandatory columns correctly."
+        )
+
+    # Save mapping if updated
+    dataset.column_mapping = mapping_to_use
+    db.commit()
 
     # Create job record
     job = ProcessingJob(
@@ -194,12 +396,13 @@ def process_dataset(
         file_path=dataset.file_path,
         scheme_id=dataset.scheme_id,
         reporting_year=dataset.reporting_year,
-        column_mapping=dataset.column_mapping or {},
+        column_mapping=mapping_to_use,
     )
 
     return {
         "job_id": job.id,
         "dataset_id": dataset_id,
         "status": "queued",
+        "validation": validation,
         "message": "Spark processing job queued. Poll GET /api/jobs/{job_id} for status.",
     }

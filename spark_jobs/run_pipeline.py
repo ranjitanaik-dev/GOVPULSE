@@ -75,19 +75,21 @@ def run_pipeline(dataset_id: int, file_path: str, scheme_id: str, reporting_year
         # 2. Apply column mapping
         logger.info("Step 2: Applying column mapping...")
         scheme_runner, default_map = SCHEME_RUNNERS.get(scheme_id, (None, {}))
+        # User explicit mapping overrides default mapping
         combined_map = {**default_map, **(column_mapping or {})}
         df = apply_column_mapping(df, combined_map)
         logger.info(f"  Columns after mapping: {df.columns}")
 
         # 3. Validate
-        logger.info("Step 3: Validating dataset...")
+        logger.info("Step 3: Validating dataset against scheme requirements...")
         validation = validate_dataset(df, scheme_id)
         logger.info(f"  Validation: valid={validation.is_valid}, errors={validation.errors}")
         result["validation"] = validation.to_dict()
 
         if not validation.is_valid:
-            logger.warning(f"Dataset has validation errors: {validation.errors}")
-            # Continue processing; partial results are still useful
+            error_details = "; ".join(validation.errors)
+            logger.error(f"Dataset validation FAILED: {error_details}")
+            raise ValueError(f"Dataset validation failed: {error_details}. Please map all required columns before processing.")
 
         # 4. Remove duplicates
         logger.info("Step 4: Deduplicating...")
