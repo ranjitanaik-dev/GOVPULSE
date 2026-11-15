@@ -5,7 +5,7 @@ import EmptyState from '../components/EmptyState.jsx'
 import { Link } from 'react-router-dom'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LineChart, Line, Legend
+  LineChart, Line, AreaChart, Area, Legend
 } from 'recharts'
 
 const SCHEMES = [
@@ -36,15 +36,16 @@ export default function PerformanceAnalytics() {
   }, [scheme])
 
   const statePerf = data?.state_performance || []
-  const topDistricts = rankings?.top || []
-  const bottomDistricts = rankings?.bottom || []
+  const topDistricts = rankings?.top?.length ? rankings.top : (data?.district_rankings?.top || [])
+  const bottomDistricts = rankings?.bottom?.length ? rankings.bottom : (data?.district_rankings?.bottom || [])
   const trendData = trends?.trends || []
+  const monthlyTrends = trends?.monthly_trends?.length ? trends.monthly_trends : (data?.monthly_trends || [])
 
   return (
     <div>
       <div className="page-header">
         <h2 className="page-title">Performance Analytics</h2>
-        <p className="page-subtitle">Scheme-wise, state-wise and district-wise performance analysis powered by Spark SQL</p>
+        <p className="page-subtitle">Scheme-wise, state-wise, and district-wise performance analysis powered by Spark SQL</p>
       </div>
 
       {/* Scheme selector */}
@@ -73,21 +74,21 @@ export default function PerformanceAnalytics() {
         </div>
       ) : (
         <>
-          {/* Summary */}
+          {/* Summary KPIs */}
           {data?.summary && (
             <div className="card" style={{ marginBottom: '1.5rem' }}>
-              <h3 className="section-title">Scheme Summary</h3>
+              <h3 className="section-title">Key Performance Indicators</h3>
               <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
                 {Object.entries(data.summary)
-                  .filter(([k, v]) => typeof v === 'number' || v === null)
-                  .slice(0, 8)
+                  .filter(([k, v]) => (typeof v === 'number' || v === null) && !k.startsWith('total_records'))
+                  .slice(0, 10)
                   .map(([k, v]) => (
                     <div key={k}>
                       <p style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                         {k.replace(/_/g, ' ')}
                       </p>
-                      <p style={{ fontSize: '1.1rem', fontWeight: 700 }}>
-                        {v !== null ? (k.includes('pct') ? `${v}%` : Number(v).toLocaleString('en-IN')) : '—'}
+                      <p style={{ fontSize: '1.15rem', fontWeight: 700 }}>
+                        {v !== null ? (k.includes('pct') ? `${v}%` : Number(v).toLocaleString('en-IN')) : 'N/A'}
                       </p>
                     </div>
                   ))}
@@ -95,14 +96,46 @@ export default function PerformanceAnalytics() {
             </div>
           )}
 
+          {/* Monthly Trajectory (if available) */}
+          {monthlyTrends.length > 0 && (
+            <div className="card" style={{ marginBottom: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                <div>
+                  <h3 className="section-title" style={{ margin: 0 }}>Monthly Performance Trend</h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', margin: 0 }}>
+                    Monthly progression across the reporting financial year
+                  </p>
+                </div>
+                <span className="chip chip-blue">Monthly Data</span>
+              </div>
+              <ResponsiveContainer width="100%" height={260}>
+                <AreaChart data={monthlyTrends} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
+                  <defs>
+                    <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#1e3a8a" stopOpacity={0.8}/>
+                      <stop offset="95%" stopColor="#1e3a8a" stopOpacity={0.1}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v/1000000).toFixed(1)}M`} />
+                  <Tooltip formatter={(v, name) => [Number(v).toLocaleString('en-IN'), name]} />
+                  <Legend wrapperStyle={{ fontSize: '0.75rem' }} />
+                  <Area type="monotone" dataKey="cumulative_central_persondays" name="Cumulative Person-days" stroke="#1e3a8a" fill="url(#areaGrad)" />
+                  <Line type="monotone" dataKey="monthly_incremental_persondays" name="Monthly Incremental Person-days" stroke="#059669" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
           {/* State performance */}
           {statePerf.length > 0 && (
             <div className="card" style={{ marginBottom: '1.5rem' }}>
-              <h3 className="section-title">State-wise Achievement (%)</h3>
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={statePerf.slice(0,20)} margin={{ top: 0, right: 10, left: -20, bottom: 60 }}>
+              <h3 className="section-title">State-wise Target Achievement (%)</h3>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={statePerf.slice(0,20)} margin={{ top: 0, right: 10, left: -20, bottom: 40 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="state" tick={{ fontSize: 9 }} angle={-40} textAnchor="end" />
+                  <XAxis dataKey="state" tick={{ fontSize: 10 }} angle={-30} textAnchor="end" />
                   <YAxis tick={{ fontSize: 11 }} />
                   <Tooltip formatter={(v) => v !== null ? `${v}%` : 'N/A'} />
                   <Bar dataKey="achievement_pct" fill="#1e3a8a" radius={[3,3,0,0]} name="Achievement %" />
@@ -112,9 +145,9 @@ export default function PerformanceAnalytics() {
           )}
 
           {/* District rankings */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
             <div className="card">
-              <h3 className="section-title" style={{ color: '#065f46' }}>🏆 Top 10 Districts</h3>
+              <h3 className="section-title" style={{ color: '#065f46' }}>🏆 Top 10 Performing Districts</h3>
               {!topDistricts.length ? <p style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>No district data available</p> : (
                 <div className="table-container">
                   <table>
@@ -125,7 +158,11 @@ export default function PerformanceAnalytics() {
                           <td style={{ fontWeight: 700, color: '#065f46' }}>{i+1}</td>
                           <td>{d.district}</td>
                           <td style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{d.state}</td>
-                          <td><span className="badge-on-track">{d.achievement_pct?.toFixed(1)}%</span></td>
+                          <td>
+                            <span className="badge-on-track">
+                              {d.achievement_pct !== null && d.achievement_pct !== undefined ? `${d.achievement_pct.toFixed(1)}%` : 'N/A'}
+                            </span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -135,7 +172,7 @@ export default function PerformanceAnalytics() {
             </div>
 
             <div className="card">
-              <h3 className="section-title" style={{ color: '#991b1b' }}>⚠️ Bottom 10 Districts</h3>
+              <h3 className="section-title" style={{ color: '#991b1b' }}>⚠️ Bottom 10 Performing Districts</h3>
               {!bottomDistricts.length ? <p style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>No district data available</p> : (
                 <div className="table-container">
                   <table>
@@ -146,7 +183,11 @@ export default function PerformanceAnalytics() {
                           <td style={{ fontWeight: 700, color: '#991b1b' }}>{i+1}</td>
                           <td>{d.district}</td>
                           <td style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{d.state}</td>
-                          <td><span className="badge-low-achievement">{d.achievement_pct?.toFixed(1)}%</span></td>
+                          <td>
+                            <span className={d.achievement_pct < 50 ? 'badge-low-achievement' : 'badge-needs-attention'}>
+                              {d.achievement_pct !== null && d.achievement_pct !== undefined ? `${d.achievement_pct.toFixed(1)}%` : 'N/A'}
+                            </span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>

@@ -137,11 +137,25 @@ def handle_missing_values(
 
 def remove_duplicates(df: DataFrame, subset: list[str]) -> tuple[DataFrame, int]:
     """
-    Remove duplicate rows based on the given subset of columns.
-    Returns (deduplicated_df, duplicate_count).
+    Remove true duplicate rows without blindly dropping valid periodic snapshots.
+    If multiple snapshots exist per district (e.g. periodic/daily updates),
+    deduplication operates on exact full-row equality so all valid records are preserved.
     """
     original_count = df.count()
-    df_dedup = df.dropDuplicates(subset=[c for c in subset if c in df.columns])
+    valid_cols = [c for c in subset if c in df.columns]
+
+    # Check if this is a multi-snapshot dataset (multiple records per geographic unit)
+    if "district" in df.columns and "state" in df.columns:
+        geo_count = df.select("state", "district").distinct().count()
+        if original_count > geo_count * 2:
+            # Multi-snapshot dataset: only remove true identical rows across all columns
+            df_dedup = df.dropDuplicates()
+            duplicates_removed = original_count - df_dedup.count()
+            if duplicates_removed > 0:
+                logger.info(f"Removed {duplicates_removed:,} exact duplicate rows.")
+            return df_dedup, duplicates_removed
+
+    df_dedup = df.dropDuplicates(subset=valid_cols) if valid_cols else df.dropDuplicates()
     dedup_count = df_dedup.count()
     duplicates_removed = original_count - dedup_count
     if duplicates_removed > 0:

@@ -20,11 +20,26 @@ PROJECT_ROOT = os.path.abspath(
 )
 
 
+import math
+
+def _sanitize_json(obj):
+    """Recursively replace float('nan') and float('inf') with None for clean JSON response."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    elif isinstance(obj, dict):
+        return {k: _sanitize_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_json(item) for item in obj]
+    return obj
+
+
 def _load_result(results: list, result_type: str):
     """Extract result_data for a given result_type from a list of AnalyticsResult rows."""
     for r in results:
         if r.result_type == result_type:
-            return r.result_data
+            return _sanitize_json(r.result_data)
     return None
 
 
@@ -66,17 +81,25 @@ def scheme_analytics(
     state_perf = _load_result(latest, "state_performance") or []
     rankings = _load_result(latest, "district_rankings") or {"top": [], "bottom": []}
     alerts_data = _load_result(latest, "alerts_count")
+    monthly_trends = _load_result(latest, "monthly_trends") or []
+    participation = _load_result(latest, "participation")
+    work_completion = _load_result(latest, "work_completion")
+    expenditure_breakdown = _load_result(latest, "expenditure_breakdown")
 
-    return {
+    return _sanitize_json({
         "scheme_id": scheme_id,
         "reporting_year": rows[0].reporting_year if rows else None,
         "has_data": True,
         "summary": summary,
         "state_performance": state_perf if isinstance(state_perf, list) else [],
         "district_rankings": rankings if isinstance(rankings, dict) else {"top": [], "bottom": []},
+        "monthly_trends": monthly_trends if isinstance(monthly_trends, list) else [],
+        "participation": participation,
+        "work_completion": work_completion,
+        "expenditure_breakdown": expenditure_breakdown,
         "alerts_count": alerts_data,
         "available_result_types": list(seen),
-    }
+    })
 
 
 @router.get("/states", summary="State-wise performance across all schemes")
@@ -146,7 +169,7 @@ def districts_analytics(
     }
 
 
-@router.get("/trends", summary="Year-wise trend data")
+@router.get("/trends", summary="Year-wise and month-wise trend data")
 def trends_analytics(
     scheme_id: str = Query(default=None),
     db: Session = Depends(get_db),
@@ -168,9 +191,20 @@ def trends_analytics(
                 **{k: v for k, v in data.items() if isinstance(v, (int, float, type(None)))},
             })
 
+    monthly = []
+    if scheme_id and isinstance(scheme_id, str):
+        m_query = select(AnalyticsResult).where(
+            AnalyticsResult.result_type == "monthly_trends",
+            AnalyticsResult.scheme_id == scheme_id
+        ).order_by(AnalyticsResult.id.desc())
+        m_row = db.execute(m_query).scalars().first()
+        if m_row and isinstance(m_row.result_data, list):
+            monthly = m_row.result_data
+
     return {
-        "has_data": len(trends) > 0,
+        "has_data": len(trends) > 0 or len(monthly) > 0,
         "trends": trends,
+        "monthly_trends": monthly,
     }
 
 

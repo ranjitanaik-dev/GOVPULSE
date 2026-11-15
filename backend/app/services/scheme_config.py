@@ -11,15 +11,21 @@ SCHEMES_SEED = [
         "description": "Mahatma Gandhi National Rural Employment Guarantee Act — Provides guaranteed wage employment to rural households.",
         "ministry": "Ministry of Rural Development",
         "supported_indicators": [
-            "households_registered", "households_employed",
-            "person_days_generated", "person_days_target",
-            "expenditure_lakh", "total_budget_lakh"
+            "persondays_central_liability", "person_days_generated", "person_days_target",
+            "expenditure_lakh", "wages_lakh", "material_lakh", "admin_expenditure_lakh", "total_budget_lakh",
+            "households_employed", "households_registered", "individuals_worked",
+            "completed_works", "ongoing_works", "total_works_takenup",
+            "women_persondays", "sc_persondays", "st_persondays",
+            "month", "financial_year"
         ],
         "required_columns": ["state", "district"],
         "optional_columns": [
-            "households_registered", "households_employed",
-            "person_days_generated", "person_days_target",
-            "expenditure_lakh", "total_budget_lakh"
+            "persondays_central_liability", "person_days_generated", "person_days_target",
+            "expenditure_lakh", "wages_lakh", "material_lakh", "admin_expenditure_lakh", "total_budget_lakh",
+            "households_employed", "households_registered", "individuals_worked",
+            "completed_works", "ongoing_works", "total_works_takenup",
+            "women_persondays", "sc_persondays", "st_persondays",
+            "month", "financial_year"
         ],
         "is_active": True,
     },
@@ -99,29 +105,107 @@ SCHEME_INDICATOR_METADATA = {
             "required": False,
             "description": "Households provided with wage employment",
         },
-        "person_days_generated": {
-            "label": "Person-days Generated",
+        "persondays_central_liability": {
+            "label": "Central Liability Person-days",
             "type": "numeric",
             "required": False,
-            "description": "Total person-days of employment generated",
+            "description": "Person-days of employment generated under Central Government liability",
+        },
+        "person_days_generated": {
+            "label": "Overall Person-days (Total)",
+            "type": "numeric",
+            "required": False,
+            "description": "Total person-days generated (if available separately from central liability)",
         },
         "person_days_target": {
             "label": "Person-days Target / Labour Budget",
             "type": "numeric",
             "required": False,
-            "description": "Agreed labour budget or target person-days",
+            "description": "Approved labour budget or target person-days",
         },
         "expenditure_lakh": {
             "label": "Total Expenditure (₹ Lakh)",
             "type": "numeric",
             "required": False,
-            "description": "Total wages and material expenditure in ₹ Lakhs",
+            "description": "Total expenditure (wages, materials, administration) in ₹ Lakhs",
+        },
+        "wages_lakh": {
+            "label": "Wages Expenditure (₹ Lakh)",
+            "type": "numeric",
+            "required": False,
+            "description": "Wage expenditure disbursed to rural workers in ₹ Lakhs",
+        },
+        "material_lakh": {
+            "label": "Material & Skilled Wages (₹ Lakh)",
+            "type": "numeric",
+            "required": False,
+            "description": "Expenditure on materials and skilled/semi-skilled wages in ₹ Lakhs",
+        },
+        "admin_expenditure_lakh": {
+            "label": "Administrative Expenditure (₹ Lakh)",
+            "type": "numeric",
+            "required": False,
+            "description": "Administrative contingency and contingency expenses in ₹ Lakhs",
         },
         "total_budget_lakh": {
             "label": "Total Budget Allocated (₹ Lakh)",
             "type": "numeric",
             "required": False,
             "description": "Total financial budget allocated in ₹ Lakhs",
+        },
+        "completed_works": {
+            "label": "Completed Works",
+            "type": "numeric",
+            "required": False,
+            "description": "Number of rural asset works completed",
+        },
+        "ongoing_works": {
+            "label": "Ongoing Works",
+            "type": "numeric",
+            "required": False,
+            "description": "Number of works currently in progress",
+        },
+        "total_works_takenup": {
+            "label": "Total Works Taken Up",
+            "type": "numeric",
+            "required": False,
+            "description": "Total number of works taken up / sanctioned",
+        },
+        "women_persondays": {
+            "label": "Women Person-days",
+            "type": "numeric",
+            "required": False,
+            "description": "Person-days of employment generated by women workers",
+        },
+        "sc_persondays": {
+            "label": "SC Person-days",
+            "type": "numeric",
+            "required": False,
+            "description": "Person-days of employment generated by Scheduled Caste workers",
+        },
+        "st_persondays": {
+            "label": "ST Person-days",
+            "type": "numeric",
+            "required": False,
+            "description": "Person-days of employment generated by Scheduled Tribe workers",
+        },
+        "individuals_worked": {
+            "label": "Total Individuals Worked",
+            "type": "numeric",
+            "required": False,
+            "description": "Total rural individuals provided wage employment",
+        },
+        "month": {
+            "label": "Reporting Month",
+            "type": "text",
+            "required": False,
+            "description": "Monthly reporting period (e.g. April, May, ... March)",
+        },
+        "financial_year": {
+            "label": "Financial Year",
+            "type": "text",
+            "required": False,
+            "description": "Financial Year of reporting (e.g. 2025-2026)",
         },
     },
     "pmayg": {
@@ -261,14 +345,55 @@ SYNONYMS_MAP = {
         "district", "district_name", "districtname", "dist_name", "distname",
         "district_block", "district_title", "dt_name", "d_name"
     ],
+    "persondays_central_liability": [
+        "persondays_of_central_liability_so_far", "persondays_central_liability",
+        "central_liability_persondays", "central_liability", "persondays_of_central_liability"
+    ],
+    "women_persondays": [
+        "women_persondays", "women_person_days", "persondays_women", "women_days"
+    ],
+    "sc_persondays": [
+        "sc_persondays", "sc_person_days", "persondays_sc", "sc_days"
+    ],
+    "st_persondays": [
+        "st_persondays", "st_person_days", "persondays_st", "st_days"
+    ],
+    "completed_works": [
+        "number_of_completed_works", "completed_works", "works_completed", "works_finished"
+    ],
+    "ongoing_works": [
+        "number_of_ongoing_works", "ongoing_works", "works_ongoing", "works_in_progress"
+    ],
+    "total_works_takenup": [
+        "total_no_of_works_takenup", "total_works_takenup", "works_takenup", "total_works"
+    ],
+    "wages_lakh": [
+        "wages", "wages_lakh", "wage_expenditure", "total_wages", "wages_paid"
+    ],
+    "material_lakh": [
+        "material_and_skilled_wages", "material_lakh", "material_expenditure", "skilled_wages"
+    ],
+    "admin_expenditure_lakh": [
+        "total_adm_expenditure", "admin_expenditure", "adm_expenditure", "admin_exp_lakh"
+    ],
+    "individuals_worked": [
+        "total_individuals_worked", "individuals_worked", "total_individuals"
+    ],
+    "month": [
+        "month", "reporting_month", "month_name", "reporting_period_month"
+    ],
+    "financial_year": [
+        "fin_year", "financial_year", "fy", "reporting_fin_year", "year"
+    ],
     "households_registered": [
         "households_registered", "hh_registered", "registered_hh", "households_demanded",
         "households_demanded_employment", "no_of_households_demanded_employment",
-        "demanded_hh", "reg_hh"
+        "demanded_hh", "reg_hh", "total_no_of_jobcards_issued", "jobcards_issued"
     ],
     "households_employed": [
         "households_employed", "hh_employed", "households_provided_employment",
-        "employed_hh", "no_of_households_offered_employment", "provided_employment"
+        "employed_hh", "no_of_households_offered_employment", "provided_employment",
+        "total_households_worked", "households_worked"
     ],
     "person_days_generated": [
         "person_days_generated", "persondays_generated", "total_person_days_generated",

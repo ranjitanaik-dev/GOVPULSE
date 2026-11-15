@@ -51,10 +51,13 @@ SCHEME_COLUMNS = {
         "required": ["state", "district"],
         "numeric_required": [],
         "numeric_optional": [
-            "households_registered", "households_employed", "person_days_generated",
-            "person_days_target", "expenditure_lakh", "total_budget_lakh",
+            "persondays_central_liability", "person_days_generated", "person_days_target",
+            "expenditure_lakh", "wages_lakh", "material_lakh", "admin_expenditure_lakh", "total_budget_lakh",
+            "households_registered", "households_employed", "individuals_worked",
+            "completed_works", "ongoing_works", "total_works_takenup",
+            "women_persondays", "sc_persondays", "st_persondays", "active_job_cards",
         ],
-        "dedup_keys": ["state", "district", "reporting_year"],
+        "dedup_keys": ["state", "district", "reporting_year", "month"],
     },
     "pmayg": {
         "required": ["state", "district"],

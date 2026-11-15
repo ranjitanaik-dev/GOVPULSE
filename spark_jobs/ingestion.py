@@ -131,8 +131,12 @@ def apply_column_mapping(df: DataFrame, mapping: dict) -> DataFrame:
     # Standardize mapping to { original_col: canonical_col }
     standardized = {}
     known_canonicals = {
-        "state", "district", "households_registered", "households_employed",
-        "person_days_generated", "person_days_target", "expenditure_lakh", "total_budget_lakh",
+        "state", "district", "financial_year", "month",
+        "persondays_central_liability", "person_days_generated", "person_days_target",
+        "expenditure_lakh", "wages_lakh", "material_lakh", "admin_expenditure_lakh", "total_budget_lakh",
+        "households_registered", "households_employed", "individuals_worked",
+        "completed_works", "ongoing_works", "total_works_takenup",
+        "women_persondays", "sc_persondays", "st_persondays", "active_job_cards",
         "houses_target", "houses_sanctioned", "houses_completed", "houses_in_progress", "expenditure_cr",
         "beneficiaries_identified", "cards_issued", "hospitalisations", "claims_submitted", "claims_settled",
         "total_schools", "total_students", "total_teachers", "gross_enrolment_ratio", "net_enrolment_ratio",
