@@ -11,6 +11,7 @@ const SCHEMES = [
 
 const RESULT_TYPES = [
   { id: 'state_performance', label: 'State-wise Performance' },
+  { id: 'monthly_trends', label: 'Monthly Trends & Progression' },
   { id: 'summary', label: 'Scheme Summary' },
 ]
 
