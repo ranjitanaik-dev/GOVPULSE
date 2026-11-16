@@ -26,6 +26,15 @@ from app.services.scheme_config import (
     suggest_mapping,
     validate_column_mapping,
 )
+from app.services.dataset_handoff_service import (
+    compute_sha256,
+    check_existing_duplicate,
+    reserve_dataset,
+    execute_handoff,
+    reconcile_handoffs,
+    renew_reservation_lease,
+)
+from app.services.raw_ingestion_service import ingest_raw_dataset
 
 logger = logging.getLogger("govpulse.routes.datasets")
 router = APIRouter()
@@ -45,7 +54,15 @@ def _read_file_preview(file_path: str, file_format: str, n_rows: int = 10) -> tu
 
     try:
         if is_excel:
-            df = pd.read_excel(file_path, nrows=n_rows, dtype=str)
+            try:
+                df = pd.read_excel(file_path, nrows=n_rows, dtype=str)
+            except Exception:
+                # Government portals (e.g. AwaasSoft) frequently export HTML tables with a .xls extension
+                dfs = pd.read_html(file_path)
+                if dfs:
+                    df = dfs[0].head(n_rows).astype(str)
+                else:
+                    raise
         else:
             df = pd.read_csv(file_path, nrows=n_rows, dtype=str, skipinitialspace=True)
     except Exception as e:
@@ -100,12 +117,52 @@ async def upload_dataset(
     if scheme_id.lower() not in valid_schemes:
         raise HTTPException(400, detail=f"Invalid scheme_id. Must be one of: {valid_schemes}")
 
-    # Read file
+    # Read file content and compute exact SHA-256 byte digest
     content = await file.read()
     if not content:
         raise HTTPException(400, detail="Uploaded file is empty.")
 
-    # Save file to preserved raw storage
+    file_hash = compute_sha256(content)
+
+    # Scheme-aware duplicate check (before creating reservations or files)
+    existing_dup = check_existing_duplicate(db, scheme_id, file_hash)
+    if existing_dup:
+        existing_id = existing_dup["dataset_id"]
+        existing_dataset = db.get(Dataset, existing_id)
+        detected_cols = existing_dataset.detected_columns if existing_dataset else []
+        preview_rows = []
+        if existing_dataset and os.path.exists(existing_dataset.file_path):
+            try:
+                _, preview_rows, _ = _read_file_preview(
+                    existing_dataset.file_path, existing_dataset.file_format, n_rows=10
+                )
+            except Exception:
+                pass
+
+        logger.info(
+            "Duplicate upload detected: scheme=%s, file_hash=%s. Reusing dataset_id=%s (version=%s).",
+            scheme_id,
+            file_hash,
+            existing_id,
+            existing_dup.get("version", 1),
+        )
+        return {
+            "dataset_id": existing_id,
+            "file_name": existing_dataset.file_name if existing_dataset else file.filename,
+            "scheme_id": scheme_id.lower(),
+            "version": existing_dup.get("version", 1),
+            "reporting_year": existing_dataset.reporting_year if existing_dataset else reporting_year,
+            "file_size_bytes": len(content),
+            "file_hash_sha256": file_hash,
+            "detected_columns": detected_cols,
+            "preview_rows": preview_rows,
+            "suggested_mapping": existing_dataset.column_mapping if existing_dataset else {},
+            "status": existing_dup.get("status", "uploaded"),
+            "action": "REUSED_EXISTING",
+            "message": existing_dup["message"],
+        }
+
+    # Save file to preserved raw storage byte-for-byte
     try:
         file_meta = save_uploaded_file(content, file.filename, scheme_id.lower())
     except ValueError as e:
@@ -131,35 +188,92 @@ async def upload_dataset(
     if not col_map and detected_cols:
         col_map = suggest_mapping(detected_cols, scheme_id.lower())
 
-    # Create Dataset record
-    dataset = Dataset(
+    # Step 1: Allocate canonical SQLite reservation
+    worker_id = f"worker-{os.getpid()}"
+    dataset, lease_id, attempt_number = reserve_dataset(
+        db=db,
         scheme_id=scheme_id.lower(),
         file_name=file_meta["file_name"],
         file_path=file_meta["file_path"],
         file_size_bytes=file_meta["file_size_bytes"],
         file_format=file_meta["file_format"],
+        file_hash=file_hash,
+        worker_id=worker_id,
         reporting_year=reporting_year,
         source=source or None,
         column_mapping=col_map or None,
         detected_columns=detected_cols,
-        status="uploaded",
     )
-    db.add(dataset)
-    db.commit()
-    db.refresh(dataset)
+
+    # Step 2: Execute Recoverable Handoff Protocol (RESERVED -> HANDOFF_PENDING -> Mongo -> INGESTING)
+    handoff_status = "uploaded"
+    try:
+        handoff_result = execute_handoff(
+            db=db,
+            dataset_id=dataset.id,
+            lease_id=lease_id,
+            attempt_number=attempt_number,
+            worker_id=worker_id,
+            detected_columns=detected_cols,
+            preview_rows=preview_rows,
+            column_mapping=col_map,
+        )
+        handoff_status = handoff_result.get("status", "INGESTING")
+    except Exception as e:
+        logger.warning(
+            "Recoverable handoff notice for dataset %s: %s. Preserving upload in SQLite fallback mode.",
+            dataset.id,
+            e,
+        )
+        # MongoDB unavailable: preserve dataset as valid "uploaded" in SQLite fallback
+        # Clear lease_expires_at so reconciliation does not treat it as an expired reservation
+        dataset.status = "uploaded"
+        dataset.lease_expires_at = None
+        db.commit()
+        handoff_status = "uploaded"
 
     return {
         "dataset_id": dataset.id,
         "file_name": dataset.file_name,
         "scheme_id": dataset.scheme_id,
+        "version": dataset.version,
+        "file_hash_sha256": file_hash,
         "reporting_year": dataset.reporting_year,
         "file_size_bytes": dataset.file_size_bytes,
         "detected_columns": detected_cols,
         "preview_rows": preview_rows,
         "suggested_mapping": col_map,
-        "status": "uploaded",
-        "message": "File uploaded and preserved. Please review column mappings before starting Spark processing.",
+        "status": handoff_status,
+        "message": "File uploaded and preserved. Recoverable handoff verified." if handoff_status == "INGESTING" else "File uploaded and preserved in local storage. Local processing ready.",
     }
+
+
+@router.post("/reconcile", summary="Trigger handoff crash recovery & reconciliation")
+def trigger_reconciliation(db: Session = Depends(get_db)):
+    """Run reconciliation sweep to self-heal interrupted handoffs and clean stale reservations."""
+    summary = reconcile_handoffs(db)
+    return {
+        "status": "success",
+        "reconciliation_summary": summary,
+    }
+
+
+@router.post("/{dataset_id}/ingest-raw", summary="Ingest raw records into MongoDB")
+def trigger_raw_ingestion(
+    dataset_id: int,
+    batch_size: int = 1000,
+    db: Session = Depends(get_db),
+):
+    """Trigger bounded batch ingestion of raw source records into MongoDB raw_records."""
+    try:
+        summary = ingest_raw_dataset(db, dataset_id, batch_size=batch_size)
+        return {
+            "status": "success",
+            "ingestion_summary": summary,
+        }
+    except Exception as e:
+        logger.error("Raw ingestion error for dataset %s: %s", dataset_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("", summary="List all uploaded datasets")

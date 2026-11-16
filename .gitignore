@@ -1,21 +1,38 @@
+# ==============================================================================
+# GovPulse - Git Ignore Configuration
+# ==============================================================================
+
+# Environment & Secrets (STRICT: Never commit actual environment files)
+.env
+.env.*
+*.env
+backend/.env
+frontend/.env
+!backend/.env.example
+!.env.example
+
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
 *.so
-.env
 venv/
 env/
 .venv/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
 
-# Spark / Hadoop
+# Spark / Hadoop / Temporary Execution Storage
 derby.log
 metastore_db/
 spark-warehouse/
+data/spark_temp/
+data/spark_warehouse/
+data/test_raw/
 
-# Data (raw uploads are excluded from git, but keep .gitkeep)
+# Data Directories (Raw uploads, processed, quarantine, generated reports)
 data/raw/*
 data/processed/*
 data/quarantine/*
@@ -25,23 +42,27 @@ data/reports/*
 !data/quarantine/.gitkeep
 !data/reports/.gitkeep
 
-# SQLite
+# Databases (SQLite local development & test instances)
 *.db
 *.sqlite
 *.sqlite3
+data/*.db
+data/govpulse.db
+data/test_migration.db
 
-# Node / React
+# Node / React Frontend
 node_modules/
+frontend/node_modules/
 frontend/dist/
-frontend/.env
 
-# IDE
+# Scratch & Temporary Diagnostic Scripts
+scratch/
+
+# IDE, OS & System Files
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# OS
 .DS_Store
 Thumbs.db
 

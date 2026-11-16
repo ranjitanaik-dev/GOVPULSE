@@ -9,7 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.database.db import init_db
-from app.routes import datasets, jobs, dashboard, analytics, reports, schemes
+from app.database.mongodb import init_mongo_db, close_mongo_connections, check_mongo_health
+from app.routes import datasets, jobs, dashboard, analytics, reports, schemes, auth, contact
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,6 +52,8 @@ app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"]
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
 app.include_router(schemes.router, prefix="/api/schemes", tags=["Schemes"])
+app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(contact.router, prefix="/api/contact", tags=["Public Contact"])
 
 # ---------------------------------------------------------------------------
 # Startup
@@ -65,6 +68,36 @@ def startup_event():
         os.makedirs(d, exist_ok=True)
     logger.info("Database initialised. Data directories ready.")
 
+    # MongoDB initialization (safe non-blocking initialization)
+    try:
+        mongo_report = init_mongo_db()
+        if mongo_report.get("initialized"):
+            logger.info("MongoDB initialized successfully: database=%s", mongo_report.get("database"))
+        else:
+            logger.warning("MongoDB initialization notice: %s", mongo_report.get("error"))
+    except Exception as e:
+        logger.warning("MongoDB initialization deferred: %s", e)
+
+    # Startup handoff reconciliation sweep (self-heals any crashed handoffs)
+    try:
+        from app.database.db import SessionLocal
+        from app.services.dataset_handoff_service import reconcile_handoffs
+        rec_db = SessionLocal()
+        try:
+            rec_summary = reconcile_handoffs(rec_db)
+            if rec_summary.get("scanned", 0) > 0:
+                logger.info("Startup handoff reconciliation complete: %s", rec_summary)
+        finally:
+            rec_db.close()
+    except Exception as e:
+        logger.warning("Startup handoff reconciliation notice: %s", e)
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    logger.info("GovPulse API shutting down...")
+    close_mongo_connections()
+
 
 @app.get("/", tags=["Health"])
 async def root():
@@ -77,5 +110,14 @@ async def root():
 
 
 @app.get("/health", tags=["Health"])
+@app.get("/api/health", tags=["Health"])
 async def health():
-    return {"status": "healthy"}
+    mongo_health = check_mongo_health()
+    is_mongo_ok = mongo_health.get("connected") and mongo_health.get("all_indexes_verified")
+    return {
+        "status": "healthy" if is_mongo_ok else "degraded",
+        "database": {
+            "sqlite": "healthy",
+            "mongodb": mongo_health,
+        },
+    }

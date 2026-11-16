@@ -44,7 +44,13 @@ class Dataset(Base):
     column_mapping = Column(JSON)
     detected_columns = Column(JSON)
     validation_result = Column(JSON)
-    status = Column(String, default="uploaded")    # uploaded/processing/processed/failed
+    status = Column(String, default="uploaded")    # uploaded/processing/processed/failed/RESERVED/HANDOFF_PENDING/INGESTING/ABANDONED_RESERVATION
+    file_hash = Column(String(64), nullable=True)  # SHA-256 hex digest
+    version = Column(Integer, default=1)           # Scheme version number
+    lease_id = Column(String(36), nullable=True)   # UUID lease identifier
+    worker_id = Column(String, nullable=True)      # Worker identifier
+    attempt_number = Column(Integer, default=1)    # Monotonic fencing token
+    lease_expires_at = Column(DateTime, nullable=True) # UTC lease expiration
     uploaded_at = Column(DateTime, default=datetime.datetime.utcnow)
     processed_at = Column(DateTime)
 
@@ -103,3 +109,42 @@ class DataQualityResult(Base):
     warnings = Column(JSON)
     errors = Column(JSON)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class MigrationReservation(Base):
+    __tablename__ = "migration_reservations"
+
+    dataset_id = Column(Integer, ForeignKey("datasets.id"), primary_key=True)
+    reservation_id = Column(String(36), nullable=False)
+    candidate_attempt = Column(Integer, nullable=False)
+    candidate_token = Column(String(36), nullable=False)
+    worker_id = Column(String, nullable=False)
+    lock_owner_token = Column(String(36), nullable=False)
+    lock_generation = Column(Integer, default=1)
+    reserved_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+
+
+class Officer(Base):
+    __tablename__ = "officers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    officer_id = Column(String(50), unique=True, nullable=False, index=True)
+    full_name = Column(String(100), nullable=False)
+    designation = Column(String(100), nullable=False)
+    department = Column(String(100), nullable=True)
+    password_hash = Column(String(128), nullable=False)
+    salt = Column(String(64), nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_login_at = Column(DateTime, nullable=True)
+
+
+class OfficerSession(Base):
+    __tablename__ = "officer_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_token = Column(String(64), unique=True, nullable=False, index=True)
+    officer_id = Column(String(50), ForeignKey("officers.officer_id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)

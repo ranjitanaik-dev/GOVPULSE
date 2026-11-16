@@ -31,7 +31,14 @@ def get_spark_session(app_name: str = "GovPulse") -> SparkSession:
     os.environ.setdefault("HADOOP_HOME", project_root)
     os.environ.setdefault("PYSPARK_PYTHON", "python")
 
-    spark = (
+    # Discover MongoDB and other third-party JARs in spark_jobs/jars
+    import glob
+    jar_dir = os.path.join(project_root, "spark_jobs", "jars")
+    found_jars = glob.glob(os.path.join(jar_dir, "*.jar"))
+    jars_comma = ",".join(found_jars) if found_jars else ""
+    classpath_semi = ";".join(found_jars) if found_jars else ""
+
+    builder = (
         SparkSession.builder
         .appName(app_name)
         .master("local[*]")
@@ -43,9 +50,19 @@ def get_spark_session(app_name: str = "GovPulse") -> SparkSession:
         .config("spark.executor.memory", "2g")
         .config("spark.sql.execution.arrow.pyspark.enabled", "true")
         .config("spark.sql.legacy.timeParserPolicy", "LEGACY")
+        .config("spark.sql.legacy.parquet.nanosAsLong", "true")
         .config("spark.hadoop.validateOutputSpecs", "false")
-        .getOrCreate()
     )
+
+    if found_jars:
+        builder = (
+            builder
+            .config("spark.jars", jars_comma)
+            .config("spark.driver.extraClassPath", classpath_semi)
+            .config("spark.executor.extraClassPath", classpath_semi)
+        )
+
+    spark = builder.getOrCreate()
 
     # Reduce log noise after session starts
     spark.sparkContext.setLogLevel("WARN")

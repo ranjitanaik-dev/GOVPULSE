@@ -33,9 +33,30 @@ Base = declarative_base()
 
 
 def init_db():
-    """Create all tables on startup."""
+    """Create all tables on startup and apply non-destructive SQLite schema extensions."""
     from app.models import models  # noqa: F401 — registers models
     Base.metadata.create_all(bind=engine)
+
+    # Non-destructive Phase 2 schema extension for datasets table
+    try:
+        with engine.connect() as conn:
+            cursor = conn.exec_driver_sql("PRAGMA table_info(datasets)")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+            phase2_columns = [
+                ("file_hash", "VARCHAR(64)"),
+                ("version", "INTEGER DEFAULT 1"),
+                ("lease_id", "VARCHAR(36)"),
+                ("worker_id", "VARCHAR"),
+                ("attempt_number", "INTEGER DEFAULT 1"),
+                ("lease_expires_at", "DATETIME"),
+            ]
+            for col_name, col_type in phase2_columns:
+                if col_name not in existing_cols:
+                    conn.exec_driver_sql(f"ALTER TABLE datasets ADD COLUMN {col_name} {col_type}")
+            conn.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger("govpulse.db").warning("SQLite schema check notice: %s", e)
 
 
 def get_db():

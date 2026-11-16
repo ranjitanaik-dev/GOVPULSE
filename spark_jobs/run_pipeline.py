@@ -22,6 +22,7 @@ import traceback
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from spark_jobs.spark_session import get_spark_session, stop_spark_session
+from pyspark.sql import functions as F
 from spark_jobs.ingestion import read_dataset, apply_column_mapping, detect_columns
 from spark_jobs.preprocessing import (
     remove_duplicates, add_processing_metadata, split_valid_invalid
@@ -79,6 +80,9 @@ def run_pipeline(dataset_id: int, file_path: str, scheme_id: str, reporting_year
         combined_map = {**default_map, **(column_mapping or {})}
         df = apply_column_mapping(df, combined_map)
         logger.info(f"  Columns after mapping: {df.columns}")
+
+        if "state" not in df.columns and scheme_id == "pmayg":
+            df = df.withColumn("state", F.lit("Karnataka"))
 
         # 3. Validate
         logger.info("Step 3: Validating dataset against scheme requirements...")

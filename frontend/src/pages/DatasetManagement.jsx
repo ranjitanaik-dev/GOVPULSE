@@ -1,11 +1,12 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { datasetsAPI, schemesAPI, jobsAPI } from '../services/api.js'
 import LoadingSpinner from '../components/LoadingSpinner.jsx'
 import EmptyState from '../components/EmptyState.jsx'
 import { Link } from 'react-router-dom'
 import {
   Upload, RefreshCw, CheckCircle, AlertCircle, Clock, Play,
-  Settings2, Table, Eye, X, ArrowRight, Check, AlertTriangle, Info, FileSpreadsheet
+  Settings2, Table, Eye, X, ArrowRight, Check, AlertTriangle, Info, FileSpreadsheet,
+  Database, Search, Filter, ShieldAlert
 } from 'lucide-react'
 
 const STATUS_STYLES = {
@@ -19,8 +20,11 @@ export default function DatasetManagement() {
   const [datasets, setDatasets] = useState([])
   const [schemes, setSchemes] = useState([])
   const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [schemeFilter, setSchemeFilter] = useState('all')
   const fileRef = useRef()
 
   // Selected dataset for Preview & Mapping Modal
@@ -41,14 +45,18 @@ export default function DatasetManagement() {
   })
 
   async function refresh() {
+    setLoading(true)
+    setFetchError(null)
     try {
       const [dsRes, schRes] = await Promise.all([datasetsAPI.list(), schemesAPI.list()])
-      setDatasets(dsRes.data)
-      setSchemes(schRes.data)
+      setDatasets(dsRes.data || [])
+      setSchemes(schRes.data || [])
     } catch (e) {
-      console.error(e)
+      console.error('Error fetching datasets:', e)
+      setFetchError(e.message || 'Unable to connect to dataset registry backend.')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   useEffect(() => {
@@ -160,18 +168,159 @@ export default function DatasetManagement() {
     }
   }
 
-  if (loading) return <LoadingSpinner />
+  const filteredDatasets = useMemo(() => {
+    return datasets.filter((d) => {
+      const matchesScheme = schemeFilter === 'all' || d.scheme_id === schemeFilter
+      const q = searchQuery.toLowerCase().trim()
+      const matchesSearch =
+        !q ||
+        d.file_name?.toLowerCase().includes(q) ||
+        d.source?.toLowerCase().includes(q) ||
+        String(d.id).includes(q)
+      return matchesScheme && matchesSearch
+    })
+  }, [datasets, schemeFilter, searchQuery])
+
+  if (fetchError && !datasets.length) {
+    return (
+      <div style={{ maxWidth: 800, margin: '4rem auto', padding: '0 1rem' }}>
+        <div
+          className="card"
+          style={{
+            borderLeft: '4px solid #ef4444',
+            padding: '2.5rem',
+            textAlign: 'center',
+            background: '#ffffff',
+            boxShadow: '0 10px 25px -5px rgba(0,0,0,0.05)',
+          }}
+        >
+          <div
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: '50%',
+              background: '#fee2e2',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 1.25rem',
+              color: '#ef4444',
+            }}
+          >
+            <ShieldAlert size={28} />
+          </div>
+          <h3 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#0f2a4a', marginBottom: '0.5rem' }}>
+            Dataset Registry Connection Interrupted
+          </h3>
+          <p style={{ color: '#64748b', fontSize: '0.875rem', lineHeight: 1.6, maxWidth: 500, margin: '0 auto 1.5rem' }}>
+            Unable to communicate with the GovPulse dataset ingestion service ({fetchError}).
+            Existing databases, Parquet tables, and production records remain protected and unchanged.
+          </p>
+          <button
+            onClick={refresh}
+            className="btn-primary"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', margin: '0 auto' }}
+          >
+            <RefreshCw size={15} /> Retry Registry Connection
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (loading && !datasets.length) {
+    return (
+      <div style={{ maxWidth: 1400, margin: '0 auto', paddingBottom: '3rem' }}>
+        <LoadingSpinner message="Accessing GovPulse Ingestion Registry & Data Catalog..." />
+      </div>
+    )
+  }
 
   return (
-    <div>
-      <div className="page-header">
-        <h2 className="page-title">Dataset Management</h2>
-        <p className="page-subtitle">
-          Upload government scheme datasets (CSV / Excel), inspect actual columns, map indicators, and run Spark SQL processing
-        </p>
+    <div style={{ maxWidth: 1400, margin: '0 auto', paddingBottom: '3rem' }}>
+      {/* Header Banner */}
+      <div
+        style={{
+          background: 'linear-gradient(135deg, #0f2a4a 0%, #1e3a8a 100%)',
+          borderRadius: 14,
+          padding: '2rem 2.25rem',
+          color: '#ffffff',
+          marginBottom: '2rem',
+          boxShadow: '0 10px 25px -5px rgba(15, 42, 74, 0.2)',
+          position: 'relative',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Tricolour Line */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 4,
+            background: 'linear-gradient(90deg, #FF9933 33.33%, #FFFFFF 33.33%, #FFFFFF 66.66%, #138808 66.66%)',
+          }}
+        />
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '1.5rem' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  padding: '0.2rem 0.55rem',
+                  background: 'rgba(59, 130, 246, 0.2)',
+                  border: '1px solid rgba(59, 130, 246, 0.4)',
+                  borderRadius: 6,
+                  color: '#93c5fd',
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                }}
+              >
+                <Database size={12} /> Ingestion & Registry Gateway
+              </span>
+              <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>•</span>
+              <span style={{ fontSize: '0.75rem', color: '#cbd5e1' }}>
+                Apache Spark SQL Processing Registry
+              </span>
+            </div>
+            <h2 style={{ fontSize: '1.75rem', fontWeight: 800, margin: '0 0 0.35rem', letterSpacing: '-0.02em' }}>
+              Dataset Registry & Ingestion Pipeline
+            </h2>
+            <p style={{ fontSize: '0.875rem', color: '#cbd5e1', margin: 0, maxWidth: 680 }}>
+              Upload government scheme datasets (CSV / Excel), inspect actual columns, map statutory indicators,
+              and trigger Apache Spark SQL aggregation into Parquet tables.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button
+              onClick={refresh}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.45rem',
+                padding: '0.65rem 1.15rem',
+                background: 'rgba(255, 255, 255, 0.12)',
+                color: '#ffffff',
+                border: '1px solid rgba(255, 255, 255, 0.25)',
+                borderRadius: 8,
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              <RefreshCw size={14} /> Refresh Registry
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: '1.5rem', alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: '1.5rem', alignItems: 'start' }}>
         {/* Upload form card */}
         <div className="card">
           <h3 className="section-title">Upload New Dataset</h3>
@@ -254,7 +403,7 @@ export default function DatasetManagement() {
 
         {/* Datasets list card */}
         <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
             <div>
               <h3 className="section-title" style={{ margin: 0 }}>Uploaded Government Datasets</h3>
               <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', margin: '2px 0 0' }}>
@@ -266,11 +415,70 @@ export default function DatasetManagement() {
             </button>
           </div>
 
+          {/* Quick Filter & Search Bar */}
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem', alignItems: 'center' }}>
+            <div style={{ position: 'relative', flex: '1 1 200px' }}>
+              <Search size={14} style={{ position: 'absolute', left: 10, top: 10, color: '#94a3b8' }} />
+              <input
+                type="text"
+                placeholder="Filter by filename, source, or #ID..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.45rem 0.75rem 0.45rem 2rem',
+                  borderRadius: 8,
+                  border: '1px solid #cbd5e1',
+                  fontSize: '0.8rem',
+                }}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <Filter size={14} color="#64748b" />
+              <select
+                value={schemeFilter}
+                onChange={e => setSchemeFilter(e.target.value)}
+                style={{
+                  padding: '0.45rem 0.65rem',
+                  borderRadius: 8,
+                  border: '1px solid #cbd5e1',
+                  fontSize: '0.8rem',
+                  background: '#ffffff',
+                  color: '#1e293b',
+                }}
+              >
+                <option value="all">All Schemes ({datasets.length})</option>
+                <option value="mgnrega">MGNREGA</option>
+                <option value="pmayg">PMAY-G</option>
+              </select>
+            </div>
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#dc2626',
+                  fontSize: '0.75rem',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
           {!datasets.length ? (
             <EmptyState
               title="No datasets uploaded yet"
               message="Upload a government CSV or Excel file using the form to start."
             />
+          ) : !filteredDatasets.length ? (
+            <div style={{ padding: '2rem 1rem', textAlign: 'center', color: '#64748b' }}>
+              <p style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.25rem' }}>No datasets match your search</p>
+              <p style={{ fontSize: '0.75rem', margin: 0 }}>Try adjusting your search query or scheme filter</p>
+            </div>
           ) : (
             <div className="table-container">
               <table>
@@ -286,7 +494,7 @@ export default function DatasetManagement() {
                   </tr>
                 </thead>
                 <tbody>
-                  {datasets.map(d => (
+                  {filteredDatasets.map(d => (
                     <tr key={d.id}>
                       <td style={{ fontWeight: 600 }}>#{d.id}</td>
                       <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.file_name}>

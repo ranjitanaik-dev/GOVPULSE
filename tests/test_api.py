@@ -7,6 +7,12 @@ Requires the backend to be running on localhost:8000.
 
 import os
 import sys
+
+# Ensure backend directory is in sys.path
+backend_dir = os.path.join(os.path.dirname(__file__), "..", "backend")
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
 import pytest
 import httpx
 
@@ -84,39 +90,134 @@ class TestDashboard:
 
 
 # ---------------------------------------------------------------------------
-# Dataset upload
+# Dataset upload (Isolated In-Memory Test Suite)
 # ---------------------------------------------------------------------------
 
+import glob
+import io
+from unittest.mock import patch, MagicMock
+from pymongo.errors import PyMongoError
+from starlette.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+from app.database.db import get_db, Base
+from app.main import app
+
+
 class TestDatasetUpload:
+    @classmethod
+    def setup_class(cls):
+        # Create isolated in-memory SQLite database for upload tests
+        cls.engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        cls.TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=cls.engine)
+        Base.metadata.create_all(bind=cls.engine)
+
+        def override_get_db():
+            db = cls.TestingSessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_get_db
+        cls.client = TestClient(app)
+
+    @classmethod
+    def teardown_class(cls):
+        app.dependency_overrides.clear()
+
     def test_upload_mgnrega_csv(self):
-        with open(FIXTURE_MGNREGA, "rb") as f:
-            r = httpx.post(
-                f"{API_BASE}/api/datasets/upload",
-                files={"file": ("sample_mgnrega.csv", f, "text/csv")},
-                data={
-                    "scheme_id": "mgnrega",
-                    "reporting_year": "2023-24",
-                    "source": "Test Fixture",
-                },
-            )
-        assert r.status_code == 200
-        result = r.json()
-        assert "dataset_id" in result
-        assert result["status"] == "uploaded"
-        return result["dataset_id"]
+        """Test successful dataset upload with active MongoDB handoff protocol."""
+        before_files = set(glob.glob("data/raw/mgnrega/*"))
+        mock_mongo = MagicMock()
+        mock_catalog = MagicMock()
+
+        def mock_find_one(query, **kwargs):
+            if "committed_lease_id" in query:
+                return {
+                    "dataset_id": query.get("dataset_id", 1),
+                    "attempt_number": query.get("attempt_number", 1),
+                    "status": "INGESTING",
+                    "committed_lease_id": query.get("committed_lease_id"),
+                }
+            return None
+
+        mock_catalog.find_one.side_effect = mock_find_one
+        mock_catalog.update_one.return_value = MagicMock(matched_count=1)
+        mock_mongo.dataset_catalog = mock_catalog
+        mock_mongo.audit_logs = MagicMock()
+
+        try:
+            with patch("app.services.dataset_handoff_service.get_mongo_db", return_value=mock_mongo):
+                with open(FIXTURE_MGNREGA, "rb") as f:
+                    r = self.client.post(
+                        "/api/datasets/upload",
+                        files={"file": ("sample_mgnrega.csv", f, "text/csv")},
+                        data={
+                            "scheme_id": "mgnrega",
+                            "reporting_year": "2023-24",
+                            "source": "Test Fixture",
+                        },
+                    )
+            assert r.status_code == 200
+            result = r.json()
+            assert "dataset_id" in result
+            assert result["status"] == "INGESTING"
+            assert result["version"] >= 1
+            assert "file_hash_sha256" in result
+        finally:
+            after_files = set(glob.glob("data/raw/mgnrega/*"))
+            for nf in (after_files - before_files):
+                try:
+                    os.remove(nf)
+                except Exception:
+                    pass
+
+    def test_upload_mgnrega_fallback_mode(self):
+        """Test graceful degradation to SQLite fallback when MongoDB is unavailable."""
+        before_files = set(glob.glob("data/raw/mgnrega/*"))
+        fallback_csv = io.BytesIO(b"state,district,reporting_year\nKarnataka,Mandya,2023-24\n")
+        try:
+            with patch("app.services.dataset_handoff_service.get_mongo_db", side_effect=PyMongoError("MongoDB unavailable")):
+                r = self.client.post(
+                    "/api/datasets/upload",
+                    files={"file": ("sample_fallback.csv", fallback_csv, "text/csv")},
+                    data={
+                        "scheme_id": "mgnrega",
+                        "reporting_year": "2023-24",
+                        "source": "Fallback Test Fixture",
+                    },
+                )
+            assert r.status_code == 200
+            result = r.json()
+            assert "dataset_id" in result
+            assert result["status"] == "uploaded"
+            assert "local storage" in result["message"].lower()
+        finally:
+            after_files = set(glob.glob("data/raw/mgnrega/*"))
+            for nf in (after_files - before_files):
+                try:
+                    os.remove(nf)
+                except Exception:
+                    pass
 
     def test_upload_invalid_scheme(self):
         with open(FIXTURE_MGNREGA, "rb") as f:
-            r = httpx.post(
-                f"{API_BASE}/api/datasets/upload",
+            r = self.client.post(
+                "/api/datasets/upload",
                 files={"file": ("test.csv", f, "text/csv")},
                 data={"scheme_id": "invalid", "reporting_year": "2023-24"},
             )
         assert r.status_code == 400
 
     def test_upload_missing_file_returns_422(self):
-        r = httpx.post(
-            f"{API_BASE}/api/datasets/upload",
+        r = self.client.post(
+            "/api/datasets/upload",
             data={"scheme_id": "mgnrega", "reporting_year": "2023-24"},
         )
         assert r.status_code == 422

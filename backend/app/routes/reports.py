@@ -41,8 +41,15 @@ def export_csv(
         raise HTTPException(404, detail=f"No '{result_type}' data found for scheme '{scheme_id}'.")
 
     data = row.result_data
-    if not isinstance(data, list):
-        data = [data] if isinstance(data, dict) else []
+    if isinstance(data, dict):
+        if "all" in data and isinstance(data["all"], list):
+            data = data["all"]
+        elif "top" in data and isinstance(data["top"], list):
+            data = data["top"]
+        else:
+            data = [data]
+    elif not isinstance(data, list):
+        data = []
 
     if not data:
         raise HTTPException(404, detail="No data rows to export.")

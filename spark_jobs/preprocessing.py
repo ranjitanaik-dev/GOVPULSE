@@ -16,6 +16,14 @@ logger = logging.getLogger(__name__)
 # State / District name standardisation maps
 # ---------------------------------------------------------------------------
 
+DISTRICT_ALIAS_MAP = {
+    # Karnataka: Ramanagara was officially renamed to Bengaluru South in July 2024 (District Code 1529)
+    "ramanagara": "Bengaluru South",
+    "ramanagar": "Bengaluru South",
+    "bengaluru south": "Bengaluru South",
+    "bangalore south": "Bengaluru South",
+}
+
 STATE_NAME_MAP = {
     "andaman & nicobar islands": "Andaman and Nicobar Islands",
     "andaman and nicobar": "Andaman and Nicobar Islands",
@@ -92,14 +100,23 @@ def standardise_states(df: DataFrame, state_col: str = "state") -> DataFrame:
     return df.withColumn(state_col, F.expr(mapping_expr))
 
 
-def standardise_districts(df: DataFrame, district_col: str = "district") -> DataFrame:
-    """Basic district name standardisation — capitalise and trim."""
+def standardise_districts(df: DataFrame, district_col: str = "district", apply_aliases: bool = True) -> DataFrame:
+    """Standardise district names — resolve renamed districts/aliases (if requested), capitalise and trim."""
     if district_col not in df.columns:
         return df
-    return df.withColumn(
-        district_col,
-        F.initcap(F.trim(F.col(district_col)))
-    )
+
+    if apply_aliases:
+        expr_parts = []
+        for raw, standard in DISTRICT_ALIAS_MAP.items():
+            expr_parts.append(
+                f"WHEN lower(trim({district_col})) = '{raw}' THEN '{standard}'"
+            )
+        fallback = f"ELSE initcap(trim({district_col}))"
+        mapping_expr = f"CASE {' '.join(expr_parts)} {fallback} END"
+    else:
+        mapping_expr = f"initcap(trim({district_col}))"
+
+    return df.withColumn(district_col, F.expr(mapping_expr))
 
 
 def cast_numeric_columns(df: DataFrame, numeric_cols: list[str]) -> DataFrame:

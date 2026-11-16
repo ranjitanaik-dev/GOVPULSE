@@ -60,13 +60,16 @@ SCHEME_COLUMNS = {
         "dedup_keys": ["state", "district", "reporting_year", "month"],
     },
     "pmayg": {
-        "required": ["state", "district"],
+        "required": ["district"],
         "numeric_required": [],
         "numeric_optional": [
+            "sanctions_geotagged", "sanctions_verified_accounts",
+            "installment_1", "installment_2", "installment_3", "installment_4",
+            "completed_verified", "completed_houses",
             "houses_target", "houses_sanctioned", "houses_completed",
             "houses_in_progress", "expenditure_cr",
         ],
-        "dedup_keys": ["state", "district", "reporting_year"],
+        "dedup_keys": ["district"],
     },
     "pmjay": {
         "required": ["state"],
