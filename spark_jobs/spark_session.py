@@ -36,7 +36,7 @@ def get_spark_session(app_name: str = "GovPulse") -> SparkSession:
     jar_dir = os.path.join(project_root, "spark_jobs", "jars")
     found_jars = glob.glob(os.path.join(jar_dir, "*.jar"))
     jars_comma = ",".join(found_jars) if found_jars else ""
-    classpath_semi = ";".join(found_jars) if found_jars else ""
+    classpath_semi = os.pathsep.join(found_jars) if found_jars else ""
 
     builder = (
         SparkSession.builder
