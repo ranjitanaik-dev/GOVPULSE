@@ -1,5 +1,4 @@
 # GovPulse Backend Requirements
-# Install with: pip install -r requirements.txt
 
 # Web Framework
 fastapi==0.111.1
@@ -9,9 +8,11 @@ python-multipart==0.0.9
 # Database
 sqlalchemy==2.0.30
 aiosqlite==0.20.0
+pymongo==4.16.0
+python-dotenv==1.2.4
 
-# Data Processing
-pyspark==3.5.1
+# Big Data Processing
+pyspark==4.3.0
 pandas==2.2.2
 openpyxl==3.1.5
 pyarrow==16.1.0
@@ -30,7 +31,6 @@ reportlab==4.2.2
 # Testing
 pytest==8.2.2
 pytest-asyncio==0.23.7
-httpx==0.27.0
 
-# Dev
+# Development
 colorama==0.4.6

@@ -69,3 +69,11 @@ Thumbs.db
 # Logs
 *.log
 logs/
+# Local deployment environment
+.venv-deploy/
+
+# Generated Java metadata
+/META-INF/
+
+# Local requirements backup
+requirements.backup.txt
